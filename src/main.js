@@ -5,6 +5,8 @@ const { SerialPort } = require('serialport');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow, port, state;
+let universe = Buffer.alloc(513, 0);
+let dmxTimer = null;
 const configFile = () => path.join(app.getPath('userData'), 'lumen-config.json');
 const defaultState = {
   fixtures: [
@@ -29,16 +31,24 @@ function sendStatus(status, details=''){ mainWindow?.webContents.send('dmx-statu
 async function listPorts(){ return (await SerialPort.list()).map(p=>({path:p.path,label:[p.friendlyName,p.manufacturer,p.serialNumber].filter(Boolean).join(' · ') || p.path})); }
 async function connectDMX(devicePath){
   if(port?.isOpen) await new Promise(r=>port.close(r));
-  port = new SerialPort({ path:devicePath, baudRate:250000, dataBits:8, stopBits:2, parity:'none', autoOpen:false });
+  // FTDI/Windows commonly rejects 8N2 through SetCommState. The SL3000 works
+  // reliably with 250 kbaud 8N1 and an explicit DMX BREAK between frames.
+  port = new SerialPort({ path:devicePath, baudRate:250000, dataBits:8, stopBits:1, parity:'none', rtscts:false, xon:false, xoff:false, autoOpen:false });
   await new Promise((resolve,reject)=>port.open(err=>err?reject(err):resolve()));
+  if(dmxTimer) clearInterval(dmxTimer);
+  dmxTimer = setInterval(sendFrame, 40);
   state.connection.path=devicePath; saveState(); sendStatus('connected', devicePath);
   return true;
 }
+function sendFrame(){
+  if(!port?.isOpen) return;
+  port.set({brk:true}, () => setTimeout(() => port.set({brk:false}, () => port.write(universe)), 1));
+}
 function writeUniverse(changes={}){
   if(!port?.isOpen) throw new Error('Interface DMX não está conectada');
-  const frame=Buffer.alloc(513,0); Object.entries(changes).forEach(([channel,value])=>{ const n=Number(channel); if(n>=1&&n<=512) frame[n]=Math.max(0,Math.min(255,Number(value)||0)); });
-  // ENTTEC Open DMX: 1 start-code + 512 canais, 250 kbaud, 8N2.
-  port.write(frame); port.drain();
+  if(Object.keys(changes).length===0) universe.fill(0);
+  Object.entries(changes).forEach(([channel,value])=>{ const n=Number(channel); if(n>=1&&n<=512) universe[n]=Math.max(0,Math.min(255,Number(value)||0)); });
+  sendFrame();
 }
 function createWindow(){ mainWindow=new BrowserWindow({width:1280,height:820,minWidth:980,minHeight:650,backgroundColor:'#080a11',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false}}); mainWindow.loadFile(path.join(__dirname,'renderer','index.html')); }
 app.whenReady().then(()=>{ state=loadState(); createWindow(); autoUpdater.autoDownload=false; autoUpdater.on('update-available',info=>mainWindow.webContents.send('update-available',info.version)); autoUpdater.on('error',err=>mainWindow.webContents.send('update-error',err.message)); autoUpdater.on('update-downloaded',()=>{sendStatus('updating','Reiniciando para concluir a atualização'); autoUpdater.quitAndInstall();}); });
