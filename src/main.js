@@ -62,5 +62,14 @@ ipcMain.handle('dmx:blackout',()=>writeUniverse({}));
 ipcMain.handle('config:export',async()=>{const r=await dialog.showSaveDialog(mainWindow,{title:'Exportar configurações Lumen',defaultPath:'lumen-config.json',filters:[{name:'Lumen JSON',extensions:['json']}]});if(!r.canceled){fs.writeFileSync(r.filePath,JSON.stringify(state,null,2));return r.filePath}});
 ipcMain.handle('config:import',async()=>{const r=await dialog.showOpenDialog(mainWindow,{title:'Importar configurações Lumen',properties:['openFile'],filters:[{name:'Lumen JSON',extensions:['json']}]});if(!r.canceled){state=JSON.parse(fs.readFileSync(r.filePaths[0],'utf8'));saveState();return state}});
 ipcMain.handle('update:check',async()=>{try{const result=await autoUpdater.checkForUpdates();return result?.updateInfo?.version||null}catch(e){throw new Error('Não foi possível buscar atualizações: '+e.message)}});
-ipcMain.handle('update:install',()=>autoUpdater.downloadUpdate());
+ipcMain.handle('update:install',async()=>{
+  try {
+    // Always refresh metadata immediately before downloading. This avoids the
+    // Electron updater's "Please check update first" state after a UI retry.
+    const result = await autoUpdater.checkForUpdates();
+    if(!result?.updateInfo?.version) throw new Error('Nenhuma atualização disponível');
+    await autoUpdater.downloadUpdate();
+    return true;
+  } catch(e) { throw new Error('Não foi possível baixar a atualização: '+e.message); }
+});
 ipcMain.handle('external:releases',()=>shell.openExternal('https://github.com/psilaslis-ship-it/CPJCL/releases'));

@@ -1,9 +1,59 @@
 let state;
-const toast=t=>{let e=document.querySelector('#toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',3200)};
-async function init(){state=await window.lumen.getState();render();window.lumen.onUpdate(v=>{let e=document.querySelector('#update');e.style.display='block';e.textContent='● Atualização '+v+' disponível'});window.lumen.onStatus(s=>{document.querySelector('#status').textContent=s.status==='connected'?'● Interface conectada':s.status==='error'?'● Erro na interface':'● '+s.status;toast(s.details||s.status)})}
-function render(){document.querySelector('#scenes').innerHTML=state.scenes.map(s=>`<button class="scene" onclick="play('${s.id}')"><div class="bar" style="background:${s.color}"></div><b>${s.name}</b><small class="muted">Clique para ativar</small></button>`).join('');document.querySelector('#sequences').innerHTML=state.sequences.map(s=>`<div class="seq"><b>${s.name}</b><small>${s.steps.length} cenas programadas</small><button style="margin-top:10px" onclick="sequence('${s.id}')">▶ Executar</button></div>`).join('');document.querySelector('#fixtures').innerHTML=state.fixtures.map(f=>`<div class="fixture"><b>${f.name}</b><small>DMX ${String(f.address).padStart(3,'0')} · ${f.channels} canais</small></div>`).join('')}
-async function play(id){let s=state.scenes.find(x=>x.id===id);try{await window.lumen.play(s);toast('Cena '+s.name+' ativada')}catch(e){toast(e.message)}}async function blackout(){try{await window.lumen.blackout();toast('Saída DMX apagada')}catch(e){toast(e.message)}}async function sequence(id){let q=state.sequences.find(x=>x.id===id);toast('Sequência '+q.name+' iniciada');for(let step of q.steps){await play(step.sceneId);await new Promise(r=>setTimeout(r,Math.min(step.hold*1000,5000)))}}async function openConnect(){document.querySelector('#connect').classList.add('open');let p=await window.lumen.listPorts();document.querySelector('#ports').innerHTML=p.length?p.map(x=>`<option value="${x.path}">${x.path} — ${x.label}</option>`).join(''):'<option value="">Nenhuma porta encontrada</option>'}function closeModal(){document.querySelector('#connect').classList.remove('open')}async function connect(){let p=document.querySelector('#ports').value;if(!p)return toast('Nenhuma porta selecionada');try{await window.lumen.connect(p);closeModal()}catch(e){toast(e.message)}}async function exportConfig(){let p=await window.lumen.exportConfig();if(p)toast('Configuração exportada')}async function importConfig(){try{let s=await window.lumen.importConfig();if(s){state=s;render();toast('Configuração importada')}}catch(e){toast('Arquivo de configuração inválido')}}async function configIO(){toast('Use os botões Exportar/Importar para transferir a configuração')}async function updates(){try{let v=await window.lumen.checkUpdate();toast(v?'Atualização '+v+' encontrada. Clique novamente para baixar.':'Você já está na versão mais recente')}catch(e){toast(e.message)}}init();
-// Manual update flow: update is downloaded only after an explicit confirmation.
-let lumenAvailableVersion = null;
-window.lumen.onUpdate(v => { lumenAvailableVersion = v; });
-setTimeout(() => { window.updates = async () => { try { if (lumenAvailableVersion) { if (confirm('Baixar a atualizacao '+lumenAvailableVersion+'? O Lumen sera reiniciado ao final.')) { toast('Baixando atualizacao...'); await window.lumen.installUpdate(); } return; } const v = await window.lumen.checkUpdate(); if (v) { lumenAvailableVersion=v; toast('Atualizacao '+v+' disponivel. Clique novamente para instalar.'); } else { toast('Voce ja esta na versao mais recente.'); } } catch (e) { toast(e.message); } }; }, 0);
+let availableVersion = null;
+
+function toast(message) {
+  const element = document.querySelector('#toast');
+  element.textContent = message;
+  element.style.display = 'block';
+  clearTimeout(window.toastTimer);
+  window.toastTimer = setTimeout(() => element.style.display = 'none', 3600);
+}
+
+async function init() {
+  state = await window.lumen.getState();
+  render();
+  window.lumen.onUpdate(version => {
+    availableVersion = version;
+    const badge = document.querySelector('#update');
+    badge.style.display = 'block';
+    badge.textContent = 'Atualização ' + version + ' disponível';
+  });
+  window.lumen.onStatus(info => {
+    document.querySelector('#status').textContent = info.status === 'connected' ? 'Interface conectada' : info.status === 'error' ? 'Erro na interface' : info.status;
+    toast(info.details || info.status);
+  });
+}
+
+function render() {
+  document.querySelector('#scenes').innerHTML = state.scenes.map(scene => `<button class="scene" onclick="playScene('${scene.id}')"><div class="bar" style="background:${scene.color}"></div><b>${scene.name}</b><small class="muted">Clique para ativar</small></button>`).join('');
+  document.querySelector('#sequences').innerHTML = state.sequences.map(sequence => `<div class="seq"><b>${sequence.name}</b><small>${sequence.steps.length} cenas programadas</small><button style="margin-top:10px" onclick="runSequence('${sequence.id}')">Executar</button></div>`).join('');
+  document.querySelector('#fixtures').innerHTML = state.fixtures.map(fixture => `<div class="fixture"><b>${fixture.name}</b><small>DMX ${String(fixture.address).padStart(3,'0')} · ${fixture.channels} canais</small></div>`).join('');
+}
+
+async function playScene(id) {
+  const scene = state.scenes.find(item => item.id === id);
+  try { await window.lumen.play(scene); toast('Cena ' + scene.name + ' ativada'); }
+  catch (error) { toast(error.message); }
+}
+async function blackout() { try { await window.lumen.blackout(); toast('Saída DMX apagada'); } catch (error) { toast(error.message); } }
+async function runSequence(id) { const sequence = state.sequences.find(item => item.id === id); toast('Sequência ' + sequence.name + ' iniciada'); for (const step of sequence.steps) { await playScene(step.sceneId); await new Promise(resolve => setTimeout(resolve, Math.min(step.hold * 1000, 5000))); } }
+async function openConnect() { document.querySelector('#connect').classList.add('open'); const ports = await window.lumen.listPorts(); document.querySelector('#ports').innerHTML = ports.length ? ports.map(port => `<option value="${port.path}">${port.path} — ${port.label}</option>`).join('') : '<option value="">Nenhuma porta encontrada</option>'; }
+function closeModal() { document.querySelector('#connect').classList.remove('open'); }
+async function connect() { const selected = document.querySelector('#ports').value; if (!selected) return toast('Nenhuma porta selecionada'); try { await window.lumen.connect(selected); closeModal(); } catch (error) { toast(error.message); } }
+async function exportConfig() { const destination = await window.lumen.exportConfig(); if (destination) toast('Configuração exportada'); }
+async function importConfig() { try { const imported = await window.lumen.importConfig(); if (imported) { state = imported; render(); toast('Configuração importada'); } } catch { toast('Arquivo de configuração inválido'); } }
+function configIO() { toast('Use os botões Exportar/Importar para transferir a configuração'); }
+async function updates() {
+  try {
+    if (!availableVersion) {
+      const version = await window.lumen.checkUpdate();
+      if (!version) return toast('Você já está na versão mais recente.');
+      availableVersion = version;
+    }
+    if (confirm('Baixar a atualização ' + availableVersion + '? O Lumen será reiniciado ao final.')) {
+      toast('Baixando atualização...');
+      await window.lumen.installUpdate();
+    }
+  } catch (error) { toast(error.message); }
+}
+init();
