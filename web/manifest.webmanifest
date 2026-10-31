@@ -1,0 +1,11 @@
+{
+  "name": "Lumen DMX",
+  "short_name": "Lumen",
+  "description": "Console de iluminação DMX para a igreja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#090c16",
+  "theme_color": "#0c1020",
+  "icons": [{ "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

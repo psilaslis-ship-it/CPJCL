@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1020">
+  <meta name="description" content="Controle local de iluminação DMX para a SL3000">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <title>Lumen DMX</title>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-icon">✦</span><span>Lumen <small>DMX</small></span></div>
+    <div class="top-actions">
+      <span id="updateBadge" class="update-badge" hidden>● Atualização disponível</span>
+      <span id="connectionStatus" class="connection-status">● Desconectado</span>
+      <button id="connectButton" class="button primary">Conectar interface</button>
+    </div>
+  </header>
+  <div class="shell">
+    <nav class="sidebar" aria-label="Navegação principal">
+      <button class="nav-item active" data-view="console">▦ <span>Console</span></button>
+      <button class="nav-item" data-view="scenes">◈ <span>Cenas</span></button>
+      <button class="nav-item" data-view="sequences">≋ <span>Sequências</span></button>
+      <button class="nav-item" data-view="fixtures">◉ <span>Equipamentos</span></button>
+      <button class="nav-item" data-view="settings">⚙ <span>Configurações</span></button>
+      <div class="sidebar-foot"><span id="browserStatus">Verificando navegador…</span><small>Os dados ficam neste computador.</small></div>
+    </nav>
+    <main id="mainContent" class="main-content"></main>
+  </div>
+  <dialog id="editorDialog"><div id="dialogContent"></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
