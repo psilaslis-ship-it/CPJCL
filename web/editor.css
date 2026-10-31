@@ -1,0 +1,23 @@
+.helper{font-size:12px;margin:10px 0!important}
+.channel-map{margin-top:15px}
+.channel-map summary,.fixture-scene summary,details>summary{cursor:pointer;color:#d9d2ff;font-weight:600;margin:9px 0}
+.fixture-channel-head,.fixture-channel-row{display:grid;grid-template-columns:28px minmax(110px,1fr) minmax(125px,1fr) minmax(130px,1.2fr);gap:7px;align-items:center}
+.fixture-channel-head{font-size:11px;color:var(--muted);margin-top:12px}
+.fixture-channel-row{margin:5px 0}
+.fixture-channel-row strong{color:var(--muted);font-size:12px}
+.fixture-channel-row input,.fixture-channel-row select,.preset-picker{width:100%;min-width:0;border:1px solid #3c4560;background:#0c1120;color:#fff;padding:7px 8px;border-radius:7px}
+.scene-fixtures{display:grid;gap:14px;margin-top:16px}
+.fixture-scene{border:1px solid #343e5a;background:#111827;border-radius:12px;padding:14px}
+.fixture-scene-head{display:flex;justify-content:space-between;gap:10px}
+.fixture-scene-head small{color:var(--muted)}
+.quick-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:12px 0}
+.quick-control{display:flex;flex-direction:column;gap:8px;padding:11px;border:1px solid #323b54;border-radius:9px;background:#182035}
+.quick-control label{font-size:12px;font-weight:700}
+.quick-control small{font-size:11px;color:var(--muted)}
+.quick-control input[type=color]{height:36px;width:100%;border:1px solid #526083;border-radius:7px;background:transparent}
+.position-pad{height:122px;position:relative;cursor:crosshair;border:1px solid #607094;border-radius:8px;background:linear-gradient(90deg,transparent calc(50% - .5px),#7382a4 50%,transparent calc(50% + .5px)),linear-gradient(transparent calc(50% - .5px),#7382a4 50%,transparent calc(50% + .5px)),linear-gradient(145deg,#202b45,#111729)}
+.position-dot{width:16px;height:16px;position:absolute;transform:translate(-50%,-50%);border:2px solid white;border-radius:50%;background:#8c64fa;box-shadow:0 0 0 4px #8c64fa55;pointer-events:none}
+.step-head{display:grid;grid-template-columns:minmax(120px,1fr) 115px 115px 36px;gap:8px;color:var(--muted);font-size:11px;margin-top:12px}
+.step-row{grid-template-columns:minmax(120px,1fr) 115px 115px 36px}
+dialog:has(.scene-fixtures),dialog:has(.channel-map){width:min(980px,96vw)}
+@media(max-width:700px){.fixture-channel-head{display:none}.fixture-channel-row{grid-template-columns:25px 1fr 1fr}.fixture-channel-row .channel-presets{grid-column:2/4}.step-head{display:none}.step-row{grid-template-columns:1fr 1fr 35px}.step-row .step-scene{grid-column:1/4}}

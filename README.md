@@ -13,6 +13,12 @@ O navegador precisa oferecer a API Web Serial e permitir acesso à porta. A saí
 
 As configurações são salvas neste navegador. Use **Configurações → Exportar configuração** para criar um JSON de backup e **Importar configuração** para migrar dados (inclusive um JSON exportado pelo Lumen anterior). O aplicativo busca novas versões em segundo plano e mostra um aviso discreto; só instala quando o usuário confirma, interrompendo o DMX e recarregando a janela.
 
+### Cenas e perfis de canais
+
+Os novos cadastros seguem o mapa visível nas imagens do FreeStyler: movings de 12 canais nos endereços 1 e 13; ribaltas de 2 canais em 25 e 27; PAR LEDs de 8 canais em 29, 37, 45 e 53. **Dados já salvos não são alterados automaticamente.** Em **Equipamentos → Usar mapa das imagens**, é possível trocar apenas o cadastro dos aparelhos após confirmar; exporte um backup antes e revise as cenas existentes.
+
+Em **Equipamentos → Editar**, cada canal pode ter nome, função e valores nomeados (por exemplo, `Azul=40; Verde=75`). Os valores de roda de cores, gobo e efeitos **não foram inferidos das fotos**; consulte o manual ou teste o aparelho para cadastrá-los. Em **Cenas → Editar**, ajuste a posição do moving no quadro, escolha cor RGB dos PAR LEDs e refine qualquer canal entre 0 e 255. **Testar luz sem salvar** envia os valores atuais aos aparelhos. Sequências aceitam tempo de transição e permanência por cena; a transição suaviza posição, intensidade e RGB, enquanto rodas e efeitos mudam diretamente.
+
 O código da versão para navegador está em `web/`. O servidor apenas entrega os arquivos; a porta USB é acessada localmente no navegador, sem enviar quadros DMX pela internet.
 
 Se o site privado não abrir no Edge, execute `npm run web` dentro do projeto e abra `http://localhost:8765` no Edge. Nesse modo, mantenha também o terminal aberto. A atualização automática do código hospedado não atualiza a cópia local: para ela, faça `git pull` com o Lumen fechado e inicie novamente.
