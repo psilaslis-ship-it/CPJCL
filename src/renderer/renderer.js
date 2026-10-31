@@ -1,59 +1,45 @@
-let state;
-let availableVersion = null;
-
-function toast(message) {
-  const element = document.querySelector('#toast');
-  element.textContent = message;
-  element.style.display = 'block';
-  clearTimeout(window.toastTimer);
-  window.toastTimer = setTimeout(() => element.style.display = 'none', 3600);
+let state, activeScene = null, sequenceToken = 0;
+const $ = s => document.querySelector(s);
+function toast(text){const e=$('#toast');e.textContent=text;e.style.display='block';clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>e.style.display='none',4000)}
+function id(){return crypto.randomUUID()}
+async function init(){state=await window.lumen.getState();render();window.lumen.onUpdate(v=>{$('#update').style.display='block';$('#update').textContent='Atualização '+v+' disponível'});window.lumen.onStatus(s=>{$('#status').textContent=s.status==='connected'?'Interface conectada':s.status==='error'?'Erro na interface':s.status;toast(s.details||s.status)})}
+function render(){
+ $('#scenes').innerHTML=state.scenes.map(s=>`<button class="scene ${activeScene===s.id?'selected':''}" onclick="playScene('${s.id}')" ondblclick="editScene('${s.id}')"><div class="bar" style="background:${s.color||'#9674ff'}"></div><b>${esc(s.name)}</b><small>${Object.keys(s.channels||{}).length} canais · duplo clique para editar</small></button>`).join('');
+ $('#sequences').innerHTML=state.sequences.map(s=>`<div class="seq"><b>${esc(s.name)}</b><small>${(s.steps||[]).length} passos · ${formatDuration(s.steps||[])}</small><button style="margin-top:10px" onclick="runSequence('${s.id}')">▶ Executar</button> <button onclick="editSequence('${s.id}')">Editar</button></div>`).join('')||'<p class="muted" style="padding:14px">Nenhuma sequência. Clique em Editar para criar.</p>';
+ $('#fixtures').innerHTML=state.fixtures.map(f=>`<div class="fixture"><b>${esc(f.name)}</b><small>DMX ${String(f.address).padStart(3,'0')} · ${f.channels} canais · ${esc(f.type||'personalizado')}</small></div>`).join('');
 }
-
-async function init() {
-  state = await window.lumen.getState();
-  render();
-  window.lumen.onUpdate(version => {
-    availableVersion = version;
-    const badge = document.querySelector('#update');
-    badge.style.display = 'block';
-    badge.textContent = 'Atualização ' + version + ' disponível';
-  });
-  window.lumen.onStatus(info => {
-    document.querySelector('#status').textContent = info.status === 'connected' ? 'Interface conectada' : info.status === 'error' ? 'Erro na interface' : info.status;
-    toast(info.details || info.status);
-  });
-}
-
-function render() {
-  document.querySelector('#scenes').innerHTML = state.scenes.map(scene => `<button class="scene" onclick="playScene('${scene.id}')"><div class="bar" style="background:${scene.color}"></div><b>${scene.name}</b><small class="muted">Clique para ativar</small></button>`).join('');
-  document.querySelector('#sequences').innerHTML = state.sequences.map(sequence => `<div class="seq"><b>${sequence.name}</b><small>${sequence.steps.length} cenas programadas</small><button style="margin-top:10px" onclick="runSequence('${sequence.id}')">Executar</button></div>`).join('');
-  document.querySelector('#fixtures').innerHTML = state.fixtures.map(fixture => `<div class="fixture"><b>${fixture.name}</b><small>DMX ${String(fixture.address).padStart(3,'0')} · ${fixture.channels} canais</small></div>`).join('');
-}
-
-async function playScene(id) {
-  const scene = state.scenes.find(item => item.id === id);
-  try { await window.lumen.play(scene); toast('Cena ' + scene.name + ' ativada'); }
-  catch (error) { toast(error.message); }
-}
-async function blackout() { try { await window.lumen.blackout(); toast('Saída DMX apagada'); } catch (error) { toast(error.message); } }
-async function runSequence(id) { const sequence = state.sequences.find(item => item.id === id); toast('Sequência ' + sequence.name + ' iniciada'); for (const step of sequence.steps) { await playScene(step.sceneId); await new Promise(resolve => setTimeout(resolve, Math.min(step.hold * 1000, 5000))); } }
-async function openConnect() { document.querySelector('#connect').classList.add('open'); const ports = await window.lumen.listPorts(); document.querySelector('#ports').innerHTML = ports.length ? ports.map(port => `<option value="${port.path}">${port.path} — ${port.label}</option>`).join('') : '<option value="">Nenhuma porta encontrada</option>'; }
-function closeModal() { document.querySelector('#connect').classList.remove('open'); }
-async function connect() { const selected = document.querySelector('#ports').value; if (!selected) return toast('Nenhuma porta selecionada'); try { await window.lumen.connect(selected); closeModal(); } catch (error) { toast(error.message); } }
-async function exportConfig() { const destination = await window.lumen.exportConfig(); if (destination) toast('Configuração exportada'); }
-async function importConfig() { try { const imported = await window.lumen.importConfig(); if (imported) { state = imported; render(); toast('Configuração importada'); } } catch { toast('Arquivo de configuração inválido'); } }
-function configIO() { toast('Use os botões Exportar/Importar para transferir a configuração'); }
-async function updates() {
-  try {
-    if (!availableVersion) {
-      const version = await window.lumen.checkUpdate();
-      if (!version) return toast('Você já está na versão mais recente.');
-      availableVersion = version;
-    }
-    if (confirm('Baixar a atualização ' + availableVersion + '? O Lumen será reiniciado ao final.')) {
-      toast('Baixando atualização...');
-      await window.lumen.installUpdate();
-    }
-  } catch (error) { toast(error.message); }
-}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function formatDuration(steps){const sec=steps.reduce((n,s)=>n+(Number(s.hold)||0),0);return `${Math.floor(sec/60)}m ${sec%60}s`}
+async function persist(){state=await window.lumen.saveState(state);render()}
+async function playScene(sceneId){const scene=state.scenes.find(s=>s.id===sceneId);if(!scene)return;try{await window.lumen.play(scene);activeScene=scene.id;render();toast('Cena '+scene.name+' enviada')}catch(e){toast(e.message)}}
+async function blackout(){stopSequence();try{await window.lumen.blackout();activeScene=null;render();toast('Universo DMX apagado')}catch(e){toast(e.message)}}
+function stopSequence(){sequenceToken++;$('#stopSequence').disabled=true}
+async function runSequence(sequenceId){const sequence=state.sequences.find(s=>s.id===sequenceId);if(!sequence)return;const token=++sequenceToken;$('#stopSequence').disabled=false;toast('Sequência '+sequence.name+' iniciada');for(const step of sequence.steps){if(token!==sequenceToken)break;await playScene(step.sceneId);const until=Date.now()+Math.max(0,Number(step.hold)||0)*1000;while(token===sequenceToken&&Date.now()<until)await new Promise(r=>setTimeout(r,200));}if(token===sequenceToken){$('#stopSequence').disabled=true;toast('Sequência concluída')}}
+function closeModal(which){$('#'+which).classList.remove('open')}
+async function openConnect(){try{$('#connect').classList.add('open');const ports=await window.lumen.listPorts();$('#ports').innerHTML=ports.map(p=>`<option value="${esc(p.path)}">${esc(p.path)} — ${esc(p.label)}</option>`).join('')||'<option value="">Nenhuma porta encontrada</option>';if(state.connection?.path)$('#ports').value=state.connection.path}catch(e){toast(e.message)}}
+async function connect(){const path=$('#ports').value;if(!path)return toast('Nenhuma porta selecionada');try{await window.lumen.connect(path);state.connection.path=path;await persist();closeModal('connect')}catch(e){toast(e.message)}}
+function openEditor(html){$('#editorBody').innerHTML=html;$('#editor').classList.add('open')}
+function showConsole(){closeModal('editor')}
+function openSettings(){openEditor(`<h2>Configurações</h2><p>Configuração local da saída DMX.</p><label>Porta da interface (COM)</label><div class="formgrid"><select id="settingPort"></select><select id="settingUniverse"><option value="1">Universo 1</option></select></div><div class="dialogfooter"><button onclick="exportConfig()">Exportar dados</button><div class="right"><button onclick="closeModal('editor')">Fechar</button><button class="primary" onclick="saveSettings()">Salvar e conectar</button></div></div>`);fillPortOptions('#settingPort')}
+async function fillPortOptions(selector){try{const p=await window.lumen.listPorts();$(selector).innerHTML=p.map(x=>`<option value="${esc(x.path)}">${esc(x.path)} — ${esc(x.label)}</option>`).join('')||'<option value="">Nenhuma porta encontrada</option>';if(state.connection?.path)$(selector).value=state.connection.path}catch(e){toast(e.message)}}
+async function saveSettings(){const p=$('#settingPort').value;if(!p)return toast('Selecione a porta USB da SL3000');try{await window.lumen.connect(p);state.connection={...state.connection,path:p,universe:1};await persist();closeModal('editor')}catch(e){toast(e.message)}}
+function openFixtures(){render();openEditor(`<h2>Equipamentos DMX</h2><p>Adicione aparelhos e informe o endereço inicial e a quantidade de canais conforme o visor/manual do equipamento.</p><div id="fixtureRows">${state.fixtures.map((f,i)=>fixtureRow(f,i)).join('')}</div><button onclick="addFixtureRow()">+ Adicionar equipamento</button><div class="dialogfooter"><span>Endereços DMX vão de 1 a 512.</span><div class="right"><button onclick="closeModal('editor')">Fechar</button><button class="primary" onclick="saveFixtures()">Salvar equipamentos</button></div></div>`)}
+function fixtureRow(f={},i){return `<div class="formgrid" data-fixture="${i}"><label>Nome<input class="fname" value="${esc(f.name||'')}"></label><label>Tipo<input class="ftype" value="${esc(f.type||'LED / personalizado')}"></label><label>Endereço inicial<input class="faddress" type="number" min="1" max="512" value="${f.address||1}"></label><label>Canais<input class="fchannels" type="number" min="1" max="512" value="${f.channels||6}"></label><button onclick="this.parentElement.remove()">Remover aparelho</button></div><hr style="border-color:#292f43">`}
+function addFixtureRow(){const box=$('#fixtureRows');box.insertAdjacentHTML('beforeend',fixtureRow({name:'Novo equipamento',address:1,channels:6,type:'LED / personalizado'},Date.now()))}
+async function saveFixtures(){const rows=[...document.querySelectorAll('[data-fixture]')];const fixtures=rows.map(r=>({id:r.dataset.fixture.match(/^\d+$/)?id():(state.fixtures[Number(r.dataset.fixture)]?.id||id()),name:r.querySelector('.fname').value.trim()||'Equipamento',type:r.querySelector('.ftype').value.trim()||'personalizado',address:Number(r.querySelector('.faddress').value),channels:Number(r.querySelector('.fchannels').value)}));for(const f of fixtures){if(f.address<1||f.address>512||f.channels<1||f.address+f.channels-1>512)return toast('Revise o endereço e a quantidade de canais do equipamento')}state.fixtures=fixtures;await persist();closeModal('editor');toast('Equipamentos salvos')}
+function newScene(){state.scenes.push({id:id(),name:'Nova cena',color:'#a77fff',channels:{}});editScene(state.scenes.at(-1).id)}
+function editScene(sceneId){const scene=state.scenes.find(s=>s.id===sceneId);if(!scene)return;let max=state.fixtures.reduce((n,f)=>Math.max(n,f.address+f.channels-1),0);max=Math.max(max,24);let rows='';for(let ch=1;ch<=max;ch++){const val=Number(scene.channels?.[ch]||0);const fixture=state.fixtures.find(f=>ch>=f.address&&ch<f.address+f.channels);rows+=`<div class="channel"><span>Canal ${String(ch).padStart(3,'0')}<small class="muted">${fixture?' · '+esc(fixture.name):''}</small></span><input type="range" min="0" max="255" value="${val}" oninput="this.nextElementSibling.value=this.value"><input type="number" min="0" max="255" value="${val}" oninput="this.previousElementSibling.value=this.value"></div>`}
+openEditor(`<h2>Editar cena</h2><div class="formgrid"><label>Nome<input id="sceneName" value="${esc(scene.name)}"></label><label>Cor<input id="sceneColor" type="color" value="${scene.color||'#9674ff'}"></label></div><label>Valores DMX por canal (0–255)</label><div class="channels">${rows}</div><div class="dialogfooter"><button style="color:#ff8093" onclick="deleteScene('${scene.id}')">Excluir cena</button><div class="right"><button onclick="closeModal('editor')">Cancelar</button><button class="primary" onclick="saveScene('${scene.id}')">Salvar cena</button></div></div>`)}
+async function saveScene(sceneId){const s=state.scenes.find(x=>x.id===sceneId);s.name=$('#sceneName').value.trim()||'Cena';s.color=$('#sceneColor').value;s.channels={};document.querySelectorAll('.channel input[type=number]').forEach((input,i)=>{const v=Number(input.value)||0;if(v)s.channels[i+1]=Math.max(0,Math.min(255,v))});await persist();closeModal('editor');toast('Cena salva; clique nela para enviar ao DMX')}
+async function deleteScene(sceneId){if(!confirm('Excluir esta cena e removê-la das sequências?'))return;state.scenes=state.scenes.filter(s=>s.id!==sceneId);state.sequences.forEach(q=>q.steps=q.steps.filter(step=>step.sceneId!==sceneId));await persist();closeModal('editor')}
+function openSequences(){openEditor(`<h2>Sequências de cenas</h2><p>Defina a ordem e o tempo de permanência em cada cena. A sequência segue os tempos completos e pode ser interrompida pelo botão Parar.</p><div id="sequenceEditor">${state.sequences.map((s,i)=>sequenceEditorRow(s,i)).join('')}</div><button onclick="addSequence()">+ Nova sequência</button><div class="dialogfooter"><span></span><div class="right"><button onclick="closeModal('editor')">Fechar</button><button class="primary" onclick="saveSequences()">Salvar sequências</button></div></div>`)}
+function sequenceEditorRow(s,i){return `<div class="sequence-edit" data-index="${i}" style="padding:12px 0;border-bottom:1px solid #292f43"><div class="formgrid"><label>Nome<input class="qname" value="${esc(s.name)}"></label><label>Passos<select class="qselect">${state.scenes.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select></label></div><div class="steps">${s.steps.map(step=>stepRow(step)).join('')}</div><button style="margin-top:8px" onclick="addStep(this)">+ Adicionar passo</button><button style="margin:8px" onclick="this.closest('.sequence-edit').remove()">Remover sequência</button></div>`}
+function stepRow(step={}){return `<div class="step"><select class="step-scene">${state.scenes.map(x=>`<option value="${esc(x.id)}" ${x.id===step.sceneId?'selected':''}>${esc(x.name)}</option>`).join('')}</select><label style="margin:0">Duração (seg)<input class="step-hold" type="number" min="1" value="${Math.max(1,Number(step.hold)||10)}"></label><button onclick="this.parentElement.remove()">×</button></div>`}
+function addSequence(){const target=$('#sequenceEditor');target.insertAdjacentHTML('beforeend',sequenceEditorRow({name:'Nova sequência',steps:[{sceneId:state.scenes[0]?.id,hold:10}]},Date.now()))}
+function addStep(button){button.previousElementSibling.insertAdjacentHTML('beforeend',stepRow({sceneId:state.scenes[0]?.id,hold:10}))}
+async function saveSequences(){state.sequences=[...document.querySelectorAll('.sequence-edit')].map(row=>({id:state.sequences[Number(row.dataset.index)]?.id||id(),name:row.querySelector('.qname').value.trim()||'Sequência',steps:[...row.querySelectorAll('.step')].map(step=>({sceneId:step.querySelector('.step-scene').value,hold:Math.max(1,Number(step.querySelector('.step-hold').value)||1)}))}));await persist();closeModal('editor');toast('Sequências salvas')}
+async function setMaster(value){$('#masterValue').textContent=value;if(!activeScene)return;const current=state.scenes.find(s=>s.id===activeScene);if(current)await window.lumen.play({...current,channels:Object.fromEntries(Object.entries(current.channels||{}).map(([c,v])=>[c,Math.round(v*value/255)]))}).catch(()=>{})}
+async function exportConfig(){const p=await window.lumen.exportConfig();if(p)toast('Configuração exportada')}
+async function importConfig(){try{const value=await window.lumen.importConfig();if(value){state=value;activeScene=null;render();toast('Configuração importada')}}catch(e){toast('Arquivo inválido: '+e.message)}}
+async function updates(){try{const version=await window.lumen.checkUpdate();if(version&&confirm('Baixar atualização '+version+'? O aplicativo será reiniciado ao terminar.')){toast('Baixando atualização...');await window.lumen.installUpdate()}else if(!version)toast('O aplicativo já está atualizado')}catch(e){toast(e.message)}}
 init();

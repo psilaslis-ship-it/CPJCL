@@ -42,11 +42,19 @@ async function connectDMX(devicePath){
 }
 function sendFrame(){
   if(!port?.isOpen) return;
-  port.set({brk:true}, () => setTimeout(() => port.set({brk:false}, () => port.write(universe)), 1));
+  port.set({brk:true}, err => {
+    if(err){sendStatus('error','Falha ao gerar BREAK DMX: '+err.message);return;}
+    setTimeout(() => port.set({brk:false}, clearErr => {
+      if(clearErr){sendStatus('error','Falha ao encerrar BREAK DMX: '+clearErr.message);return;}
+      port.write(universe, writeErr=>{if(writeErr)sendStatus('error','Falha ao enviar quadro DMX: '+writeErr.message);});
+    }), 1);
+  });
 }
 function writeUniverse(changes={}){
   if(!port?.isOpen) throw new Error('Interface DMX não está conectada');
-  if(Object.keys(changes).length===0) universe.fill(0);
+  // Every scene is a full state. Clear omitted channels so old fixture values
+  // do not leak into the next scene. Blackout uses the same zeroed universe.
+  universe.fill(0);
   Object.entries(changes).forEach(([channel,value])=>{ const n=Number(channel); if(n>=1&&n<=512) universe[n]=Math.max(0,Math.min(255,Number(value)||0)); });
   sendFrame();
 }
@@ -57,7 +65,7 @@ ipcMain.handle('state:get',()=>state);
 ipcMain.handle('state:save',(_,next)=>{state=next;saveState();return state});
 ipcMain.handle('ports:list',listPorts);
 ipcMain.handle('dmx:connect',async(_,p)=>{try{return await connectDMX(p)}catch(e){sendStatus('error',e.message);throw e}});
-ipcMain.handle('dmx:scene',(_,scene)=>writeUniverse(scene.channels));
+ipcMain.handle('dmx:scene',(_,scene)=>writeUniverse(scene.channels||{}));
 ipcMain.handle('dmx:blackout',()=>writeUniverse({}));
 ipcMain.handle('config:export',async()=>{const r=await dialog.showSaveDialog(mainWindow,{title:'Exportar configurações Lumen',defaultPath:'lumen-config.json',filters:[{name:'Lumen JSON',extensions:['json']}]});if(!r.canceled){fs.writeFileSync(r.filePath,JSON.stringify(state,null,2));return r.filePath}});
 ipcMain.handle('config:import',async()=>{const r=await dialog.showOpenDialog(mainWindow,{title:'Importar configurações Lumen',properties:['openFile'],filters:[{name:'Lumen JSON',extensions:['json']}]});if(!r.canceled){state=JSON.parse(fs.readFileSync(r.filePaths[0],'utf8'));saveState();return state}});
