@@ -5,7 +5,7 @@ export const ROLES = [
   ['lamp', 'Lâmpada / abertura'], ['speed', 'Velocidade'], ['macro', 'Macro'],
   ['reset', 'Reset'], ['ring', 'Anel de LED'], ['dimmer', 'Intensidade'],
   ['red', 'Vermelho'], ['green', 'Verde'], ['blue', 'Azul'],
-  ['white', 'Branco'], ['effect', 'Cor / efeito'], ['unused', 'Sem função']
+  ['white', 'Branco'], ['whiteStrobe', 'Branco com strobo'], ['effect', 'Cor / efeito'], ['unused', 'Sem função']
 ];
 
 const moving = [
@@ -17,8 +17,8 @@ const moving = [
 const ribalta = [['Velocidade', 'speed'], ['Cores / efeitos', 'effect']];
 const par = [
   ['Nada', 'unused'], ['Intensidade', 'dimmer'], ['Vermelho', 'red'],
-  ['Verde', 'green'], ['Azul', 'blue'], ['Branco 1', 'white'],
-  ['Branco 2', 'white'], ['Cores sortidas', 'effect']
+  ['Verde', 'green'], ['Azul', 'blue'], ['Branco', 'white'],
+  ['Branco com strobo', 'whiteStrobe'], ['Cores sortidas', 'effect']
 ];
 
 export const PROFILE_CHANNELS = { Moving: moving, Ribalta: ribalta, 'PAR LED': par };
@@ -49,9 +49,10 @@ export function channelDefinitions(fixture) {
   return Array.from({ length: fixture.channels }, (_, index) => {
     const saved = fixture.channelDefs?.[index] || {};
     const fallback = template.length === fixture.channels ? template[index] : null;
+    const oldWhite = fixture.type === 'PAR LED' && fixture.channels === 8 && index === 6 && saved.role === 'white' && saved.label === 'Branco 2';
     return {
-      label: String(saved.label || fallback?.[0] || `Canal ${index + 1}`),
-      role: ROLES.some(([role]) => role === saved.role) ? saved.role : (fallback?.[1] || 'raw'),
+      label: String(oldWhite ? 'Branco com strobo' : saved.label || fallback?.[0] || `Canal ${index + 1}`),
+      role: oldWhite ? 'whiteStrobe' : (ROLES.some(([role]) => role === saved.role) ? saved.role : (fallback?.[1] || 'raw')),
       presets: Array.isArray(saved.presets) ? saved.presets.filter(p => p && typeof p.name === 'string' && Number.isInteger(Number(p.value)) && Number(p.value) >= 0 && Number(p.value) <= 255).map(p => ({ name: p.name, value: Number(p.value) })) : []
     };
   });

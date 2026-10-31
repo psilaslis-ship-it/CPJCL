@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lumen-dmx-web-v2';
+const CACHE_NAME = 'lumen-dmx-web-v3';
 const ASSETS = ['./', './index.html', './styles.css', './editor.css', './app.js', './dmx.js', './profiles.js', './manifest.webmanifest', './icon.svg'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))));
 self.addEventListener('activate', event => event.waitUntil((async () => { for (const name of await caches.keys()) if (name.startsWith('lumen-dmx-web-') && name !== CACHE_NAME) await caches.delete(name); await self.clients.claim(); })()));

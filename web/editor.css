@@ -21,3 +21,25 @@
 .step-row{grid-template-columns:minmax(120px,1fr) 115px 115px 36px}
 dialog:has(.scene-fixtures),dialog:has(.channel-map){width:min(980px,96vw)}
 @media(max-width:700px){.fixture-channel-head{display:none}.fixture-channel-row{grid-template-columns:25px 1fr 1fr}.fixture-channel-row .channel-presets{grid-column:2/4}.step-head{display:none}.step-row{grid-template-columns:1fr 1fr 35px}.step-row .step-scene{grid-column:1/4}}
+.control-windows{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin:14px 0}
+.control-window{border:1px solid #3d506c;background:#161f32;border-radius:12px;overflow:hidden}
+.control-window-head{display:flex;align-items:center;gap:9px;padding:10px 13px;background:#22324b;border-bottom:1px solid #3d506c}
+.control-window-head h3{font-size:14px;margin:0}
+.control-window-icon{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;background:#4d4482;color:#eee}
+.control-window-body{padding:13px}
+.control-window .channel-row{grid-template-columns:minmax(94px,1fr) minmax(80px,1.3fr) 56px;padding:8px 0;gap:8px}
+.control-window .channel-row span{font-size:12px}
+.control-window .channel-row small{display:none}
+.choice-row{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px}
+.choice-button{border:1px solid #566582;background:#26334d;color:#e8edfb;border-radius:8px;padding:8px 11px;min-height:35px}
+.choice-button:hover,.choice-button[aria-pressed=true]{border-color:#ac8cff;background:#594b8f;color:white}
+.control-note{font-size:11px!important;line-height:1.4;color:#abb8d2!important;margin:10px 0 0!important}
+.color-swatches{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:11px}
+.color-swatch{width:30px;height:30px;background:var(--swatch);border:2px solid #aab6cd;border-radius:8px;box-shadow:inset 0 0 0 1px #0004}
+.color-swatch:hover{transform:scale(1.09);border-color:#fff}
+.color-picker-line{display:flex;gap:9px;align-items:center;margin-bottom:10px}
+.color-picker-line .rgb-picker{height:37px;flex:1;min-width:80px;border:1px solid #526083;border-radius:7px;background:transparent}
+.control-divider{border-top:1px solid #374762;margin:13px 0}
+.advanced-channels{border-top:1px solid #2c3b54;margin-top:10px;padding-top:4px}
+.advanced-channels summary{color:#9ba9c5;font-size:12px}
+.advanced-channels .channel-list{max-height:230px}

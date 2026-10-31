@@ -19,6 +19,8 @@ Os novos cadastros seguem o mapa visível nas imagens do FreeStyler: movings de 
 
 Em **Equipamentos → Editar**, cada canal pode ter nome, função e valores nomeados (por exemplo, `Azul=40; Verde=75`). Os valores de roda de cores, gobo e efeitos **não foram inferidos das fotos**; consulte o manual ou teste o aparelho para cadastrá-los. Em **Cenas → Editar**, ajuste a posição do moving no quadro, escolha cor RGB dos PAR LEDs e refine qualquer canal entre 0 e 255. **Testar luz sem salvar** envia os valores atuais aos aparelhos. Sequências aceitam tempo de transição e permanência por cena; a transição suaviza posição, intensidade e RGB, enquanto rodas e efeitos mudam diretamente.
 
+O editor de cenas agora prioriza janelas funcionais: no PAR LED, **Luz** (canal 2, intensidade) e **Cores** (RGB nos canais 3–5, branco no 6, branco com strobo no 7 e cores sortidas no 8); no moving, **Lâmpada**, **Cores e gobos** e **Posição e movimento**; na ribalta, **Cores e efeitos** e **Velocidade**. O canal 1 “Nada” do PAR não aparece nos controles comuns. Os números 0–255 ficam recolhidos em **Valores DMX avançados**. Botões para valores desconhecidos do moving ou da ribalta só aparecem quando esses valores são cadastrados no perfil do aparelho.
+
 O código da versão para navegador está em `web/`. O servidor apenas entrega os arquivos; a porta USB é acessada localmente no navegador, sem enviar quadros DMX pela internet.
 
 Se o site privado não abrir no Edge, execute `npm run web` dentro do projeto e abra `http://localhost:8765` no Edge. Nesse modo, mantenha também o terminal aberto. A atualização automática do código hospedado não atualiza a cópia local: para ela, faça `git pull` com o Lumen fechado e inicie novamente.

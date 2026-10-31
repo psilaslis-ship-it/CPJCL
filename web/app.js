@@ -2,7 +2,7 @@ import { DmxOutput } from './dmx.js';
 import { ROLES, PROFILE_CHANNELS, imageFixtures, channelDefinitions, channelForRole, continuousChannelAddresses } from './profiles.js';
 
 const STORAGE_KEY = 'lumen-dmx-config-v1';
-const APP_VERSION = 'web-1.1.0';
+const APP_VERSION = 'web-1.2.0';
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const uid = () => crypto.randomUUID();
@@ -81,7 +81,9 @@ function renderConsole() {
     <section class="panel" style="margin-top:18px"><div class="panel-head"><h2>Equipamentos · Universo 1</h2><button class="button small" data-view="fixtures">Gerenciar</button></div><div>${state.fixtures.map(fixture => `<div class="fixture-item"><strong>${escapeHtml(fixture.name)}</strong><small>DMX ${String(fixture.address).padStart(3, '0')} · ${fixture.channels} canais</small></div>`).join('')}</div></section>`;
 }
 function renderScenes() {
+  const needsMap = state.fixtures.some(fixture => (fixture.type === 'PAR LED' && fixture.channels !== 8) || (fixture.type === 'Moving' && fixture.channels !== 12) || (fixture.type === 'Ribalta' && fixture.channels !== 2));
   return `${header('Cenas', 'Monte posições, cores e efeitos por equipamento. Os valores DMX continuam disponíveis para ajuste fino.', '<button class="button primary" data-action="new-scene">+ Nova cena</button>')}
+    ${needsMap ? '<div class="notice">Seu cadastro ainda usa o mapa de canais antigo. Os painéis facilitados dependem do modo correto dos aparelhos. Confira em <button class="button small" data-view="fixtures">Equipamentos</button> antes de montar a cena.</div>' : ''}
     <div class="notice">Confirme os endereços e os modos DMX nos aparelhos antes de acionar uma cena. Para rodas de cor, gobos e efeitos, cadastre os valores conforme o manual do seu equipamento.</div>
     <section class="panel">${state.scenes.map(scene => `<div class="record-item"><div><strong>${escapeHtml(scene.name)}</strong><small>${Object.values(scene.channels || {}).filter(x => Number(x) > 0).length} canais ativos</small></div><div class="row"><button class="button small" data-action="play-scene" data-id="${escapeHtml(scene.id)}">Ativar</button><button class="button small" data-action="edit-scene" data-id="${escapeHtml(scene.id)}">Editar</button></div></div>`).join('') || '<div class="empty">Nenhuma cena cadastrada.</div>'}</section>`;
 }
@@ -125,18 +127,47 @@ function editFixture(fixtureId) {
 function channelRow(number, label, value) {
   return `<div class="channel-row" data-channel="${number}"><span>${escapeHtml(label)}<small>DMX ${String(number).padStart(3, '0')}</small></span><input type="range" min="0" max="255" value="${value}"><input type="number" min="0" max="255" value="${value}"></div>`;
 }
+function controlPanel(title, icon, content, note = '') {
+  return `<section class="control-window"><div class="control-window-head"><span class="control-window-icon">${icon}</span><h3>${title}</h3></div><div class="control-window-body">${content}${note ? `<p class="control-note">${note}</p>` : ''}</div></section>`;
+}
+function choices(entry, options) {
+  if (!entry) return '';
+  return `<div class="choice-row">${options.map(([label, value]) => `<button class="choice-button" type="button" data-action="set-channel" data-channel="${entry.number}" data-value="${value}" aria-pressed="${entry.value === value}">${label}</button>`).join('')}</div>`;
+}
+function namedChoices(entry) {
+  if (!entry?.presets.length) return '';
+  return `<div class="choice-row">${entry.presets.map(preset => `<button class="choice-button" type="button" data-action="set-channel" data-channel="${entry.number}" data-value="${preset.value}" aria-pressed="${entry.value === preset.value}">${escapeHtml(preset.name)}</button>`).join('')}</div>`;
+}
 function fixtureSceneCard(fixture, scene) {
   const defs = channelDefinitions(fixture);
   const entries = defs.map((def, index) => ({ ...def, number: fixture.address + index, value: Math.max(0, Math.min(255, Number(scene.channels?.[fixture.address + index]) || 0)) }));
-  const pan = entries.find(entry => entry.role === 'pan');
-  const tilt = entries.find(entry => entry.role === 'tilt');
-  const rgb = ['red', 'green', 'blue'].map(role => entries.find(entry => entry.role === role));
+  const byRole = role => entries.find(entry => entry.role === role);
+  const row = (role, label) => { const entry = byRole(role); return entry ? channelRow(entry.number, label || entry.label, entry.value) : ''; };
+  const manualNote = 'Para botões de cor, gobo ou efeito com nomes, cadastre os valores uma vez em Equipamentos → Editar.';
+  const rgb = ['red', 'green', 'blue'].map(byRole);
   const hasRgb = rgb.every(Boolean);
   const rgbHex = hasRgb ? `#${rgb.map(entry => entry.value.toString(16).padStart(2, '0')).join('')}` : '#ffffff';
-  const quickColor = hasRgb ? `<div class="quick-control"><label>Cor RGB</label><input class="rgb-picker" type="color" value="${rgbHex}" data-fixture-id="${escapeHtml(fixture.id)}"><button class="button small" type="button" data-action="apply-rgb" data-id="${escapeHtml(fixture.id)}">Aplicar cor</button><small>A intensidade vai para 255; branco e efeito vão para 0.</small></div>` : '';
-  const position = pan && tilt ? `<div class="quick-control"><label>Posição do moving</label><div class="position-pad" data-pan="${pan.number}" data-tilt="${tilt.number}" title="Clique para definir horizontal e vertical"><span class="position-dot" style="left:${pan.value / 255 * 100}%;top:${(255 - tilt.value) / 255 * 100}%"></span></div><small>Clique no quadro; os canais Horizontal e Vertical abaixo mostram os valores exatos.</small></div>` : '';
-  const presets = entries.filter(entry => entry.presets.length).map(entry => `<div class="quick-control"><label>${escapeHtml(entry.label)}</label><select class="preset-picker" data-channel="${entry.number}"><option value="">Escolha um valor nomeado</option>${entry.presets.map(p => `<option value="${p.value}">${escapeHtml(p.name)} · ${p.value}</option>`).join('')}</select></div>`).join('');
-  return `<section class="fixture-scene"><div class="fixture-scene-head"><strong>${escapeHtml(fixture.name)}</strong><small>DMX ${fixture.address}–${fixture.address + fixture.channels - 1} · ${escapeHtml(fixture.type)}</small></div><div class="quick-grid">${position}${quickColor}${presets}</div><details ${fixture.type === 'Moving' ? '' : 'open'}><summary>Valores dos canais</summary><div class="channel-list">${entries.map(entry => channelRow(entry.number, entry.label, entry.value)).join('')}</div></details></section>`;
+  const pan = byRole('pan'), tilt = byRole('tilt');
+  const positionPad = pan && tilt ? `<div class="position-pad" data-pan="${pan.number}" data-tilt="${tilt.number}" title="Clique para definir a posição"><span class="position-dot" style="left:${pan.value / 255 * 100}%;top:${(255 - tilt.value) / 255 * 100}%"></span></div>` : '';
+  let panels = '';
+  if (fixture.type === 'PAR LED' && hasRgb) {
+    const dimmer = byRole('dimmer');
+    panels += controlPanel('Luz', '◉', `${choices(dimmer, [['Apagada', 0], ['Fraca', 64], ['Média', 140], ['Forte', 255]])}${row('dimmer', 'Intensidade')}`, 'Apagar conserva a cor escolhida para você reacender depois.');
+    const swatches = ['#ff0000', '#ff8800', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#a000ff', '#ff00aa', '#ffffff'];
+    const palette = `<div class="rgb-control"><div class="color-swatches">${swatches.map(color => `<button type="button" class="color-swatch" style="--swatch:${color}" data-action="apply-rgb" data-id="${escapeHtml(fixture.id)}" data-color="${color}" aria-label="Escolher cor ${color}"></button>`).join('')}</div><div class="color-picker-line"><input class="rgb-picker" type="color" value="${rgbHex}" aria-label="Escolher qualquer cor"><button class="button small" type="button" data-action="apply-rgb" data-id="${escapeHtml(fixture.id)}">Aplicar cor</button></div></div>`;
+    panels += controlPanel('Cores', '◈', `${palette}<div class="rgb-sliders">${row('red', 'Vermelho')}${row('green', 'Verde')}${row('blue', 'Azul')}</div><div class="control-divider"></div>${row('white', 'Branco')}${row('whiteStrobe', 'Branco com strobo')}${row('effect', 'Cores sortidas')}`, 'Escolher uma cor acende a luz, desliga branco, strobo e cores sortidas. Esses três modos também podem ser ajustados separadamente.');
+  } else if (fixture.type === 'Moving' && pan && tilt) {
+    const lamp = byRole('lamp');
+    panels += controlPanel('Lâmpada', '◉', `${choices(lamp, [['Fechada', 0]])}${row('lamp', 'Abertura / lâmpada')}${row('strobe', 'Estrobo')}`, 'O valor para abrir pode variar por modelo. Ajuste a barra até encontrar o ponto correto e salve a cena.');
+    panels += controlPanel('Cores e gobos', '◈', `${namedChoices(byRole('colorWheel'))}${row('colorWheel', 'Cor')}${namedChoices(byRole('gobo'))}${row('gobo', 'Gobo')}`, manualNote);
+    panels += controlPanel('Posição e movimento', '✣', `${positionPad}${row('pan', 'Horizontal')}${row('tilt', 'Vertical')}${row('speed', 'Velocidade')}${namedChoices(byRole('macro'))}${row('macro', 'Movimento automático / macro')}`, 'Clique no quadro para apontar o moving. A transição suave é definida na sequência de cenas.');
+  } else if (fixture.type === 'Ribalta' && byRole('effect')) {
+    panels += controlPanel('Cores e efeitos', '◈', `${choices(byRole('effect'), [['Apagar', 0]])}${namedChoices(byRole('effect'))}${row('effect', 'Escolher cor / efeito')}`, manualNote);
+    panels += controlPanel('Velocidade', '↝', `${row('speed', 'Velocidade do efeito')}`, 'A velocidade faz diferença nos efeitos automáticos da ribalta.');
+  } else {
+    panels += controlPanel('Controles', '◉', entries.map(entry => `${namedChoices(entry)}${channelRow(entry.number, entry.label, entry.value)}`).join(''), 'Este aparelho usa um perfil personalizado. Nomeie os canais em Equipamentos para tornar os controles mais claros.');
+  }
+  return `<section class="fixture-scene"><div class="fixture-scene-head"><strong>${escapeHtml(fixture.name)}</strong><small>${escapeHtml(fixture.type)} · DMX ${fixture.address}–${fixture.address + fixture.channels - 1}</small></div><div class="control-windows">${panels}</div><details class="advanced-channels"><summary>Valores DMX avançados</summary><div class="channel-list">${entries.map(entry => channelRow(entry.number, `${entry.label} · canal ${entry.number - fixture.address + 1}`, entry.value)).join('')}</div></details></section>`;
 }
 function editScene(sceneId) {
   const existing = state.scenes.find(item => item.id === sceneId);
@@ -310,6 +341,7 @@ $('#editorDialog').addEventListener('click', event => {
   if (action === 'close-dialog') closeDialog();
   if (action === 'add-step') $('#stepList').insertAdjacentHTML('beforeend', stepHtml({ sceneId: state.scenes[0].id, hold: 10 }));
   if (action === 'remove-step') button.closest('.step-row').remove();
+  if (action === 'set-channel') setEditorChannel(Number(button.dataset.channel), Number(button.dataset.value));
   if (action === 'load-profile' || action === 'generate-channels') {
     const type = $('#fixtureType').value.trim();
     const template = PROFILE_CHANNELS[type];
@@ -323,11 +355,12 @@ $('#editorDialog').addEventListener('click', event => {
   if (action === 'apply-rgb') {
     const fixture = state.fixtures.find(item => item.id === id);
     if (!fixture) return;
-    const hex = button.closest('.quick-control').querySelector('.rgb-picker').value;
+    const hex = button.dataset.color || button.closest('.rgb-control').querySelector('.rgb-picker').value;
     for (const [index, role] of ['red', 'green', 'blue'].entries()) setEditorChannel(channelForRole(fixture, role), parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16));
     const dimmer = channelForRole(fixture, 'dimmer');
-    if (dimmer !== null && readEditorChannel(dimmer) === 0) setEditorChannel(dimmer, 255);
-    channelDefinitions(fixture).forEach((def, index) => { if (def.role === 'white' || def.role === 'effect') setEditorChannel(fixture.address + index, 0); });
+    if (dimmer !== null) setEditorChannel(dimmer, 255);
+    channelDefinitions(fixture).forEach((def, index) => { if (['white', 'whiteStrobe', 'effect'].includes(def.role)) setEditorChannel(fixture.address + index, 0); });
+    button.closest('.control-window').querySelector('.rgb-picker').value = hex;
     toast('Cor aplicada à cena. Salve a cena para guardar.');
   }
   if (action === 'preview-scene') {
@@ -348,11 +381,13 @@ $('#editorDialog').addEventListener('click', event => {
 function readEditorChannel(number) { return Number(document.querySelector(`#sceneForm .channel-row[data-channel="${number}"] input[type=number]`)?.value || 0); }
 function setEditorChannel(number, value) {
   if (number === null || number === undefined) return;
-  const row = document.querySelector(`#sceneForm .channel-row[data-channel="${number}"]`);
-  if (!row) return;
   const safe = Math.max(0, Math.min(255, Number(value) || 0));
-  row.querySelector('input[type=range]').value = safe;
-  row.querySelector('input[type=number]').value = safe;
+  document.querySelectorAll(`#sceneForm .channel-row[data-channel="${number}"]`).forEach(row => {
+    row.querySelector('input[type=range]').value = safe;
+    row.querySelector('input[type=number]').value = safe;
+  });
+  document.querySelectorAll(`#sceneForm .choice-button[data-channel="${number}"]`).forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.value) === safe)));
+  updatePositionDots();
 }
 function updatePositionDots() {
   document.querySelectorAll('#sceneForm .position-pad').forEach(pad => {
@@ -364,9 +399,7 @@ function updatePositionDots() {
 $('#editorDialog').addEventListener('input', event => {
   const row = event.target.closest('.channel-row');
   if (!row) return;
-  if (event.target.type === 'range') row.querySelector('input[type=number]').value = event.target.value;
-  if (event.target.type === 'number') row.querySelector('input[type=range]').value = event.target.value;
-  updatePositionDots();
+  setEditorChannel(Number(row.dataset.channel), Number(event.target.value));
 });
 $('#editorDialog').addEventListener('change', event => {
   const picker = event.target.closest('.preset-picker');
