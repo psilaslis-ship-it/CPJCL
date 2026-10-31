@@ -1,0 +1,27 @@
+{
+  "name": "lumen-dmx",
+  "version": "0.1.0",
+  "description": "Console local de iluminação DMX para igrejas",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable nsis",
+    "rebuild-native": "electron-builder install-app-deps"
+  },
+  "build": {
+    "appId": "br.com.cpjcl.lumen",
+    "productName": "Lumen DMX",
+    "directories": { "output": "release" },
+    "files": ["src/**/*", "package.json", "README.md"],
+    "publish": [{ "provider": "github", "owner": "psilaslis-ship-it", "repo": "CPJCL" }],
+    "win": { "target": ["portable", "nsis"] }
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2",
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "electron": "^39.2.3",
+    "electron-builder": "^26.0.12"
+  }
+}
