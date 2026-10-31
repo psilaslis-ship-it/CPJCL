@@ -15,6 +15,8 @@ As configurações são salvas neste navegador. Use **Configurações → Export
 
 O código da versão para navegador está em `web/`. O servidor apenas entrega os arquivos; a porta USB é acessada localmente no navegador, sem enviar quadros DMX pela internet.
 
+Se o site privado não abrir no Edge, execute `npm run web` dentro do projeto e abra `http://localhost:8765` no Edge. Nesse modo, mantenha também o terminal aberto. A atualização automática do código hospedado não atualiza a cópia local: para ela, faça `git pull` com o Lumen fechado e inicie novamente.
+
 ## Versão Electron anterior (legado)
 
 ## Executar no computador de controle

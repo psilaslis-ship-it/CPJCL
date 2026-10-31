@@ -5,6 +5,7 @@
   "author": "CPJCL",
   "main": "src/main.js",
   "scripts": {
+    "web": "node web/server.cjs",
     "start": "electron .",
     "dist": "electron-builder --win portable nsis --publish never",
     "rebuild-native": "electron-builder install-app-deps"
