@@ -25,8 +25,9 @@ export const PROFILE_CHANNELS = { Moving: moving, Ribalta: ribalta, 'PAR LED': p
 
 export function profileFixture(name, type, address) {
   const template = PROFILE_CHANNELS[type];
+  const groupId = ({ Moving: 'group-moving', Ribalta: 'group-ribalta', 'PAR LED': 'group-par-led' })[type] || '';
   return {
-    id: crypto.randomUUID(), name, type, address, channels: template.length,
+    id: crypto.randomUUID(), name, type, address, channels: template.length, groupId,
     channelDefs: template.map(([label, role]) => ({ label, role, presets: [] }))
   };
 }

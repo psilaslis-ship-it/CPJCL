@@ -1,8 +1,9 @@
 import { DmxOutput } from './dmx.js';
 import { ROLES, PROFILE_CHANNELS, imageFixtures, channelDefinitions, channelForRole, continuousChannelAddresses } from './profiles.js';
+import { DEFAULT_GROUPS, normalizedGroups, compatibleGroup, matchingGroupChannel } from './groups.js';
 
 const STORAGE_KEY = 'lumen-dmx-config-v1';
-const APP_VERSION = 'web-1.2.0';
+const APP_VERSION = 'web-1.3.0';
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const uid = () => crypto.randomUUID();
@@ -11,6 +12,7 @@ const wait = milliseconds => new Promise(resolve => setTimeout(resolve, millisec
 function initialState() {
   return {
     fixtures: imageFixtures(),
+    groups: DEFAULT_GROUPS.map(group => ({ ...group })),
     scenes: [{ id: uid(), name: 'Minha primeira cena', color: '#865cff', channels: {} }],
     sequences: [],
     connection: { universe: 1 }
@@ -19,8 +21,11 @@ function initialState() {
 
 function normalizedState(value) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.fixtures) || !Array.isArray(value.scenes) || !Array.isArray(value.sequences)) throw new Error('Arquivo sem formato de configuração Lumen.');
+  const fixtures = value.fixtures.map(fixture => ({ id: String(fixture.id || uid()), name: String(fixture.name || 'Equipamento'), type: String(fixture.type || 'Personalizado'), address: Number(fixture.address), channels: Number(fixture.channels), groupId: String(fixture.groupId || ''), channelDefs: Array.isArray(fixture.channelDefs) ? fixture.channelDefs : undefined }));
+  const grouped = normalizedGroups(value, fixtures);
   return {
-    fixtures: value.fixtures.map(fixture => ({ id: String(fixture.id || uid()), name: String(fixture.name || 'Equipamento'), type: String(fixture.type || 'Personalizado'), address: Number(fixture.address), channels: Number(fixture.channels), channelDefs: Array.isArray(fixture.channelDefs) ? fixture.channelDefs : undefined })),
+    fixtures: grouped.fixtures,
+    groups: grouped.groups,
     scenes: value.scenes.map(scene => ({ id: String(scene.id || uid()), name: String(scene.name || 'Cena'), color: /^#[0-9a-f]{6}$/i.test(scene.color) ? scene.color : '#865cff', channels: scene.channels && typeof scene.channels === 'object' ? scene.channels : {} })),
     sequences: value.sequences.map(sequence => ({ id: String(sequence.id || uid()), name: String(sequence.name || 'Sequência'), steps: Array.isArray(sequence.steps) ? sequence.steps.map(step => ({ sceneId: String(step.sceneId), hold: Math.max(1, Number(step.hold) || 1), fade: Math.max(0, Number(step.fade) || 0) })) : [] })),
     connection: { universe: 1 }
@@ -35,6 +40,9 @@ let activeSceneId = null;
 let activeSequenceToken = 0;
 let activeSequenceName = '';
 let serviceWorkerRegistration = null;
+let livePreviewSnapshot = null;
+let livePreviewEnabled = false;
+let livePreviewTimer = null;
 const dmx = new DmxOutput(onDmxState);
 
 function save() {
@@ -85,7 +93,7 @@ function renderScenes() {
   return `${header('Cenas', 'Monte posições, cores e efeitos por equipamento. Os valores DMX continuam disponíveis para ajuste fino.', '<button class="button primary" data-action="new-scene">+ Nova cena</button>')}
     ${needsMap ? '<div class="notice">Seu cadastro ainda usa o mapa de canais antigo. Os painéis facilitados dependem do modo correto dos aparelhos. Confira em <button class="button small" data-view="fixtures">Equipamentos</button> antes de montar a cena.</div>' : ''}
     <div class="notice">Confirme os endereços e os modos DMX nos aparelhos antes de acionar uma cena. Para rodas de cor, gobos e efeitos, cadastre os valores conforme o manual do seu equipamento.</div>
-    <section class="panel">${state.scenes.map(scene => `<div class="record-item"><div><strong>${escapeHtml(scene.name)}</strong><small>${Object.values(scene.channels || {}).filter(x => Number(x) > 0).length} canais ativos</small></div><div class="row"><button class="button small" data-action="play-scene" data-id="${escapeHtml(scene.id)}">Ativar</button><button class="button small" data-action="edit-scene" data-id="${escapeHtml(scene.id)}">Editar</button></div></div>`).join('') || '<div class="empty">Nenhuma cena cadastrada.</div>'}</section>`;
+    <section class="panel">${state.scenes.map(scene => `<div class="record-item"><div><strong>${escapeHtml(scene.name)}</strong><small>${Object.values(scene.channels || {}).filter(x => Number(x) > 0).length} canais ativos</small></div><div class="row"><button class="button small" data-action="play-scene" data-id="${escapeHtml(scene.id)}">Ativar</button><button class="button small" data-action="edit-scene" data-id="${escapeHtml(scene.id)}">Editar</button><button class="button small danger" data-action="delete-scene" data-id="${escapeHtml(scene.id)}">Excluir</button></div></div>`).join('') || '<div class="empty">Nenhuma cena cadastrada.</div>'}</section>`;
 }
 function renderSequences() {
   return `${header('Sequências', 'Organize cenas, tempo de transição e permanência. Transições suaves movem pan/tilt e misturam intensidade/RGB.', '<button class="button primary" data-action="new-sequence">+ Nova sequência</button>')}
@@ -94,9 +102,13 @@ function renderSequences() {
 }
 function renderFixtures() {
   const collisions = state.fixtures.filter((fixture, index) => state.fixtures.some((other, otherIndex) => index !== otherIndex && fixture.address <= other.address + other.channels - 1 && other.address <= fixture.address + fixture.channels - 1));
-  return `${header('Equipamentos', 'Edite endereço, função e nome de cada canal. Você pode adicionar mais aparelhos quando precisar.', '<div class="toolbar"><button class="button" data-action="apply-image-map">Usar mapa das imagens</button><button class="button primary" data-action="new-fixture">+ Adicionar equipamento</button></div>')}
+  const sections = [...state.groups, { id: '', name: 'Sem grupo' }].map(group => {
+    const fixtures = state.fixtures.filter(fixture => fixture.groupId === group.id);
+    return `<section class="panel fixture-group"><div class="panel-head"><h2>${escapeHtml(group.name)} <span class="muted">(${fixtures.length})</span></h2>${group.id ? `<button class="button small" data-action="edit-group" data-id="${escapeHtml(group.id)}">Editar grupo</button>` : ''}</div>${fixtures.map(fixture => `<div class="record-item"><div><strong>${escapeHtml(fixture.name)}</strong><small>${escapeHtml(fixture.type)} · DMX ${String(fixture.address).padStart(3, '0')} a ${String(fixture.address + fixture.channels - 1).padStart(3, '0')} · ${fixture.channels} canais</small></div><button class="button small" data-action="edit-fixture" data-id="${escapeHtml(fixture.id)}">Editar</button></div>`).join('') || '<div class="empty">Nenhum equipamento neste grupo.</div>'}</section>`;
+  }).join('');
+  return `${header('Equipamentos', 'Organize os aparelhos em grupos e ajuste o perfil de cada um.', '<div class="toolbar"><button class="button" data-action="apply-image-map">Usar mapa das imagens</button><button class="button" data-action="new-group">+ Novo grupo</button><button class="button primary" data-action="new-fixture">+ Adicionar equipamento</button></div>')}
     ${collisions.length ? '<div class="notice">Há endereços DMX sobrepostos. Confira se isso é intencional.</div>' : ''}
-    <section class="panel">${state.fixtures.map(fixture => `<div class="record-item"><div><strong>${escapeHtml(fixture.name)}</strong><small>${escapeHtml(fixture.type)} · DMX ${String(fixture.address).padStart(3, '0')} a ${String(fixture.address + fixture.channels - 1).padStart(3, '0')} · ${fixture.channels} canais</small></div><button class="button small" data-action="edit-fixture" data-id="${escapeHtml(fixture.id)}">Editar</button></div>`).join('') || '<div class="empty">Nenhum equipamento cadastrado.</div>'}</section>`;
+    <div class="stack">${sections}</div>`;
 }
 function renderSettings() {
   return `${header('Configurações', 'Conexão USB, cópia de segurança e atualização do aplicativo.')}
@@ -112,17 +124,22 @@ function render() {
 }
 
 function showDialog(html) { $('#dialogContent').innerHTML = html; $('#editorDialog').showModal(); }
-function closeDialog() { $('#editorDialog').close(); }
+function closeDialog() { endLivePreview(); $('#editorDialog').close(); }
 function field(label, id, value, type = 'text', extra = '') { return `<div class="field"><label for="${id}">${label}</label><input id="${id}" type="${type}" value="${escapeHtml(value)}" ${extra}></div>`; }
 function footer(deleteAction = '', previewAction = '') { return `<div class="footer-actions">${deleteAction}${previewAction}<button class="button" data-action="close-dialog">Cancelar</button><button class="button primary" type="submit">Salvar</button></div>`; }
 
 function fixtureChannelRows(fixture) {
   return channelDefinitions(fixture).map((definition, index) => `<div class="fixture-channel-row" data-index="${index}"><strong>${index + 1}</strong><input class="channel-label" aria-label="Nome do canal ${index + 1}" value="${escapeHtml(definition.label)}" maxlength="60"><select class="channel-role" aria-label="Função do canal ${index + 1}">${ROLES.map(([role, label]) => `<option value="${role}" ${definition.role === role ? 'selected' : ''}>${label}</option>`).join('')}</select><input class="channel-presets" aria-label="Valores nomeados do canal ${index + 1}" placeholder="Ex.: Azul=40; Verde=75" value="${escapeHtml(definition.presets.map(p => `${p.name}=${p.value}`).join('; '))}"></div>`).join('');
 }
+function editGroup(groupId) {
+  const group = state.groups.find(item => item.id === groupId);
+  showDialog(`<h2>${group ? 'Editar grupo' : 'Novo grupo'}</h2><p>Os controles coletivos de cenas funcionam quando os aparelhos do grupo usam o mesmo perfil de canais.</p><form id="groupForm" data-id="${escapeHtml(group?.id || '')}">${field('Nome do grupo', 'groupName', group?.name || '', 'text', 'required maxlength="80"')}${footer(group ? `<button class="button danger" type="button" data-action="delete-group" data-id="${escapeHtml(group.id)}">Excluir grupo</button>` : '')}</form>`);
+}
 function editFixture(fixtureId) {
   const existing = state.fixtures.find(item => item.id === fixtureId);
-  const fixture = existing || { name: '', type: 'Personalizado', address: 1, channels: 6 };
-  showDialog(`<h2>${existing ? 'Editar equipamento' : 'Novo equipamento'}</h2><p>Confirme endereço e modo DMX no aparelho. Dê nomes e funções aos canais; valores nomeados são opcionais para cor, gobo e efeitos.</p><form id="fixtureForm" data-id="${escapeHtml(existing?.id || '')}"><div class="form-grid">${field('Nome', 'fixtureName', fixture.name, 'text', 'required maxlength="80"')}${field('Tipo / perfil', 'fixtureType', fixture.type)}${field('Endereço inicial', 'fixtureAddress', fixture.address, 'number', 'required min="1" max="512"')}${field('Canais', 'fixtureChannels', fixture.channels, 'number', 'required min="1" max="512"')}</div><div class="toolbar"><button class="button small" type="button" data-action="load-profile">Carregar perfil desse tipo</button><button class="button small" type="button" data-action="generate-channels">Ajustar quantidade de canais</button></div><p class="helper">Tipos disponíveis: Moving, Ribalta, PAR LED. Para valores nomeados, use Nome=valor, separados por ponto e vírgula (0 a 255). Confira os valores no manual.</p><details class="channel-map" open><summary>Mapa e nomes dos canais</summary><div class="fixture-channel-head"><span>#</span><span>Nome</span><span>Função</span><span>Valores nomeados</span></div><div id="fixtureChannelList">${fixtureChannelRows(fixture)}</div></details>${footer(existing ? `<button class="button danger" type="button" data-action="delete-fixture" data-id="${escapeHtml(existing.id)}">Excluir</button>` : '')}</form>`);
+  const fixture = existing || { name: '', type: 'Personalizado', address: 1, channels: 6, groupId: '' };
+  const groupField = `<div class="field"><label for="fixtureGroup">Grupo</label><select id="fixtureGroup"><option value="">Sem grupo</option>${state.groups.map(group => `<option value="${escapeHtml(group.id)}" ${fixture.groupId === group.id ? 'selected' : ''}>${escapeHtml(group.name)}</option>`).join('')}</select></div>`;
+  showDialog(`<h2>${existing ? 'Editar equipamento' : 'Novo equipamento'}</h2><p>Confirme endereço e modo DMX no aparelho. Dê nomes e funções aos canais; valores nomeados são opcionais para cor, gobo e efeitos.</p><form id="fixtureForm" data-id="${escapeHtml(existing?.id || '')}"><div class="form-grid">${field('Nome', 'fixtureName', fixture.name, 'text', 'required maxlength="80"')}${field('Tipo / perfil', 'fixtureType', fixture.type)}${field('Endereço inicial', 'fixtureAddress', fixture.address, 'number', 'required min="1" max="512"')}${field('Canais', 'fixtureChannels', fixture.channels, 'number', 'required min="1" max="512"')}</div>${groupField}<div class="toolbar"><button class="button small" type="button" data-action="load-profile">Carregar perfil desse tipo</button><button class="button small" type="button" data-action="generate-channels">Ajustar quantidade de canais</button></div><p class="helper">Tipos disponíveis: Moving, Ribalta, PAR LED. Para valores nomeados, use Nome=valor, separados por ponto e vírgula (0 a 255). Confira os valores no manual.</p><details class="channel-map" open><summary>Mapa e nomes dos canais</summary><div class="fixture-channel-head"><span>#</span><span>Nome</span><span>Função</span><span>Valores nomeados</span></div><div id="fixtureChannelList">${fixtureChannelRows(fixture)}</div></details>${footer(existing ? `<button class="button danger" type="button" data-action="delete-fixture" data-id="${escapeHtml(existing.id)}">Excluir</button>` : '')}</form>`);
 }
 function channelRow(number, label, value) {
   return `<div class="channel-row" data-channel="${number}"><span>${escapeHtml(label)}<small>DMX ${String(number).padStart(3, '0')}</small></span><input type="range" min="0" max="255" value="${value}"><input type="number" min="0" max="255" value="${value}"></div>`;
@@ -138,7 +155,7 @@ function namedChoices(entry) {
   if (!entry?.presets.length) return '';
   return `<div class="choice-row">${entry.presets.map(preset => `<button class="choice-button" type="button" data-action="set-channel" data-channel="${entry.number}" data-value="${preset.value}" aria-pressed="${entry.value === preset.value}">${escapeHtml(preset.name)}</button>`).join('')}</div>`;
 }
-function fixtureSceneCard(fixture, scene) {
+function fixtureSceneCard(fixture, scene, title = fixture.name) {
   const defs = channelDefinitions(fixture);
   const entries = defs.map((def, index) => ({ ...def, number: fixture.address + index, value: Math.max(0, Math.min(255, Number(scene.channels?.[fixture.address + index]) || 0)) }));
   const byRole = role => entries.find(entry => entry.role === role);
@@ -167,14 +184,25 @@ function fixtureSceneCard(fixture, scene) {
   } else {
     panels += controlPanel('Controles', '◉', entries.map(entry => `${namedChoices(entry)}${channelRow(entry.number, entry.label, entry.value)}`).join(''), 'Este aparelho usa um perfil personalizado. Nomeie os canais em Equipamentos para tornar os controles mais claros.');
   }
-  return `<section class="fixture-scene"><div class="fixture-scene-head"><strong>${escapeHtml(fixture.name)}</strong><small>${escapeHtml(fixture.type)} · DMX ${fixture.address}–${fixture.address + fixture.channels - 1}</small></div><div class="control-windows">${panels}</div><details class="advanced-channels"><summary>Valores DMX avançados</summary><div class="channel-list">${entries.map(entry => channelRow(entry.number, `${entry.label} · canal ${entry.number - fixture.address + 1}`, entry.value)).join('')}</div></details></section>`;
+  return `<section class="fixture-scene"><div class="fixture-scene-head"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(fixture.type)} · DMX ${fixture.address}–${fixture.address + fixture.channels - 1}</small></div><div class="control-windows">${panels}</div><details class="advanced-channels"><summary>Valores DMX avançados</summary><div class="channel-list">${entries.map(entry => channelRow(entry.number, `${entry.label} · canal ${entry.number - fixture.address + 1}`, entry.value)).join('')}</div></details></section>`;
+}
+function sceneGroupPanels(scene) {
+  return [...state.groups, { id: '', name: 'Sem grupo' }].map(group => {
+    const members = state.fixtures.filter(fixture => fixture.groupId === group.id);
+    if (!members.length) return '';
+    const compatible = group.id && members.length > 1 && compatibleGroup(members);
+    const collective = compatible ? `<div class="group-controls" data-group-id="${escapeHtml(group.id)}" data-source-fixture-id="${escapeHtml(members[0].id)}"><p class="group-hint">Alterações aqui se aplicam aos ${members.length} equipamentos do grupo.</p>${fixtureSceneCard(members[0], scene, `Todos: ${group.name}`)}</div>` : '';
+    const notice = group.id && members.length > 1 && !compatible ? '<p class="group-hint">Este grupo reúne perfis diferentes. Ajuste cada aparelho separadamente para não enviar valores incompatíveis.</p>' : '';
+    const individuals = members.length === 1 ? fixtureSceneCard(members[0], scene) : `<div class="individual-list"><h4>Ajuste individual</h4>${members.map(fixture => `<details class="individual-editor"><summary>${escapeHtml(fixture.name)}</summary>${fixtureSceneCard(fixture, scene)}</details>`).join('')}</div>`;
+    return `<details class="scene-group" data-group-id="${escapeHtml(group.id)}"><summary><strong>${escapeHtml(group.name)}</strong><span>${members.length} ${members.length === 1 ? 'equipamento' : 'equipamentos'}</span></summary><div class="scene-group-body">${collective}${notice}${individuals}</div></details>`;
+  }).join('');
 }
 function editScene(sceneId) {
   const existing = state.scenes.find(item => item.id === sceneId);
   const scene = existing || { name: '', color: '#865cff', channels: {} };
   const covered = new Set(state.fixtures.flatMap(fixture => Array.from({ length: fixture.channels }, (_, index) => fixture.address + index)));
   const free = Object.entries(scene.channels || {}).filter(([number]) => !covered.has(Number(number)) && Number(number) >= 1 && Number(number) <= 512).map(([number, value]) => channelRow(Number(number), 'Canal livre', Math.max(0, Math.min(255, Number(value) || 0)))).join('');
-  showDialog(`<h2>${existing ? 'Editar cena' : 'Nova cena'}</h2><p>Monte a cena por aparelho. Uma cena envia o estado completo; canais não definidos ficam em zero.</p><form id="sceneForm" data-id="${escapeHtml(existing?.id || '')}"><div class="form-grid">${field('Nome', 'sceneName', scene.name, 'text', 'required maxlength="80"')}${field('Cor do botão', 'sceneColor', scene.color, 'color')}</div><div class="scene-fixtures">${state.fixtures.map(fixture => fixtureSceneCard(fixture, scene)).join('') || '<p>Cadastre equipamentos antes de criar a cena.</p>'}</div>${free ? `<details><summary>Canais fora do cadastro atual</summary><div class="channel-list">${free}</div></details>` : ''}${footer(existing ? `<button class="button danger" type="button" data-action="delete-scene" data-id="${escapeHtml(existing.id)}">Excluir</button>` : '', '<button class="button" type="button" data-action="preview-scene">Testar luz sem salvar</button>')}</form>`);
+  showDialog(`<h2>${existing ? 'Editar cena' : 'Nova cena'}</h2><p>Abra um grupo, ajuste todos juntos ou abra um aparelho para personalizar. Os grupos começam fechados.</p><form id="sceneForm" data-id="${escapeHtml(existing?.id || '')}"><div class="form-grid">${field('Nome', 'sceneName', scene.name, 'text', 'required maxlength="80"')}${field('Cor do botão', 'sceneColor', scene.color, 'color')}</div><div class="live-preview-bar"><div><strong>Prévia ao vivo</strong><small>Enquanto ligada, cada alteração é enviada imediatamente. Ao desligar, volta à luz anterior.</small></div><button class="button" type="button" data-action="toggle-live-preview" id="livePreviewButton" aria-pressed="false">Ativar prévia</button></div><div class="scene-fixtures">${sceneGroupPanels(scene) || '<p>Cadastre equipamentos antes de criar a cena.</p>'}</div>${free ? `<details><summary>Canais fora do cadastro atual</summary><div class="channel-list">${free}</div></details>` : ''}${footer(existing ? `<button class="button danger" type="button" data-action="delete-scene" data-id="${escapeHtml(existing.id)}">Excluir</button>` : '')}</form>`);
 }
 function sceneChannelsFromForm(form) {
   const channels = {};
@@ -183,6 +211,36 @@ function sceneChannelsFromForm(form) {
     if (value) channels[row.dataset.channel] = value;
   });
   return channels;
+}
+function scheduleLivePreview() {
+  if (!livePreviewEnabled || !dmx.connected) return;
+  clearTimeout(livePreviewTimer);
+  livePreviewTimer = setTimeout(() => {
+    if (livePreviewEnabled && dmx.connected && $('#sceneForm')) dmx.setChannels(sceneChannelsFromForm($('#sceneForm')));
+  }, 30);
+}
+function endLivePreview() {
+  if (!livePreviewEnabled) return;
+  livePreviewEnabled = false;
+  clearTimeout(livePreviewTimer);
+  if (livePreviewSnapshot) dmx.frame.set(livePreviewSnapshot);
+  else dmx.frame.fill(0);
+  livePreviewSnapshot = null;
+  const button = $('#livePreviewButton');
+  if (button) { button.textContent = 'Ativar prévia'; button.setAttribute('aria-pressed', 'false'); }
+  toast('Prévia desligada. A iluminação voltou ao estado anterior.');
+}
+function toggleLivePreview() {
+  if (livePreviewEnabled) return endLivePreview();
+  if (!dmx.connected) return toast('Conecte a interface para ativar a prévia ao vivo.');
+  livePreviewSnapshot = Uint8Array.from(dmx.frame);
+  if (activeSequenceName) stopSequence(false);
+  livePreviewEnabled = true;
+  const button = $('#livePreviewButton');
+  button.textContent = 'Desativar prévia';
+  button.setAttribute('aria-pressed', 'true');
+  dmx.setChannels(sceneChannelsFromForm($('#sceneForm')));
+  toast('Prévia ao vivo ligada. Alterações são enviadas imediatamente.');
 }
 function stepHtml(step = {}) {
   return `<div class="step-row"><select class="step-scene" aria-label="Cena">${state.scenes.map(scene => `<option value="${escapeHtml(scene.id)}" ${scene.id === step.sceneId ? 'selected' : ''}>${escapeHtml(scene.name)}</option>`).join('')}</select><input class="step-fade" aria-label="Transição em segundos" type="number" min="0" max="600" step="0.1" value="${Math.max(0, Number(step.fade) || 0)}"><input class="step-hold" aria-label="Permanência em segundos" type="number" min="1" value="${Math.max(1, Number(step.hold) || 10)}"><button type="button" class="button" data-action="remove-step" title="Remover passo">×</button></div>`;
@@ -206,6 +264,17 @@ async function playScene(sceneId, fromSequence = false) {
   toast(`Cena “${scene.name}” enviada.`);
 }
 function stopSequence(showMessage = true) { activeSequenceToken++; activeSequenceName = ''; render(); if (showMessage) toast('Sequência interrompida. A cena atual permanece ativa.'); }
+function deleteScene(sceneId) {
+  const scene = state.scenes.find(item => item.id === sceneId);
+  if (!scene || !confirm(`Excluir a cena “${scene.name}” e removê-la das sequências?`)) return false;
+  if (activeSequenceName) stopSequence(false);
+  state.scenes = state.scenes.filter(item => item.id !== sceneId);
+  state.sequences.forEach(sequence => { sequence.steps = sequence.steps.filter(step => step.sceneId !== sceneId); });
+  if (activeSceneId === sceneId) activeSceneId = null;
+  save();
+  toast('Cena excluída. A saída DMX atual não foi alterada.');
+  return true;
+}
 async function transitionTo(scene, seconds, token) {
   const duration = Math.min(600, Math.max(0, Number(seconds) || 0)) * 1000;
   if (!duration) { dmx.setChannels(scene.channels); return; }
@@ -312,14 +381,18 @@ $('#mainContent').addEventListener('click', async event => {
   if (action === 'toggle-connect') $('#connectButton').click();
   if (action === 'blackout') { stopSequence(false); dmx.setChannels({}); activeSceneId = null; render(); toast(dmx.connected ? 'Todos os canais enviados em zero.' : 'Interface desconectada.'); }
   if (action === 'new-scene' || action === 'edit-scene') editScene(id);
+  if (action === 'delete-scene') deleteScene(id);
   if (action === 'play-scene') playScene(id);
   if (action === 'new-sequence' || action === 'edit-sequence') editSequence(id);
   if (action === 'run-sequence') runSequence(id);
   if (action === 'stop-sequence') stopSequence();
   if (action === 'new-fixture' || action === 'edit-fixture') editFixture(id);
+  if (action === 'new-group' || action === 'edit-group') editGroup(id);
   if (action === 'apply-image-map') {
     if (!confirm('Substituir apenas o cadastro dos equipamentos pelo mapa das imagens do FreeStyler (12/2/8 canais, DMX 1–60)? As cenas atuais serão mantidas, mas os endereços delas talvez precisem de revisão. Exporte um backup antes de continuar.')) return;
-    state.fixtures = imageFixtures(); save(); toast('Mapa das imagens aplicado. Revise os canais das cenas existentes.');
+    state.fixtures = imageFixtures();
+    for (const group of DEFAULT_GROUPS) if (!state.groups.some(item => item.id === group.id)) state.groups.push({ ...group });
+    save(); toast('Mapa das imagens aplicado. Revise os canais das cenas existentes.');
   }
   if (action === 'export') exportConfig();
   if (action === 'import') importConfig();
@@ -327,11 +400,15 @@ $('#mainContent').addEventListener('click', async event => {
   if (action === 'apply-update') applyUpdate();
 });
 $('#editorDialog').addEventListener('click', event => {
+  const summary = event.target.closest('summary');
+  if (summary?.parentElement?.matches('.scene-group') && !summary.parentElement.open) {
+    document.querySelectorAll('#sceneForm .scene-group[open]').forEach(group => { if (group !== summary.parentElement) group.open = false; });
+  }
   const pad = event.target.closest('.position-pad');
   if (pad) {
     const rect = pad.getBoundingClientRect();
-    setEditorChannel(Number(pad.dataset.pan), Math.round(Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * 255));
-    setEditorChannel(Number(pad.dataset.tilt), Math.round((1 - Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))) * 255));
+    applyEditorChannel(Number(pad.dataset.pan), Math.round(Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * 255), pad);
+    applyEditorChannel(Number(pad.dataset.tilt), Math.round((1 - Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))) * 255), pad);
     updatePositionDots();
     return;
   }
@@ -339,9 +416,10 @@ $('#editorDialog').addEventListener('click', event => {
   if (!button) return;
   const { action, id } = button.dataset;
   if (action === 'close-dialog') closeDialog();
+  if (action === 'toggle-live-preview') toggleLivePreview();
   if (action === 'add-step') $('#stepList').insertAdjacentHTML('beforeend', stepHtml({ sceneId: state.scenes[0].id, hold: 10 }));
   if (action === 'remove-step') button.closest('.step-row').remove();
-  if (action === 'set-channel') setEditorChannel(Number(button.dataset.channel), Number(button.dataset.value));
+  if (action === 'set-channel') applyEditorChannel(Number(button.dataset.channel), Number(button.dataset.value), button);
   if (action === 'load-profile' || action === 'generate-channels') {
     const type = $('#fixtureType').value.trim();
     const template = PROFILE_CHANNELS[type];
@@ -356,29 +434,46 @@ $('#editorDialog').addEventListener('click', event => {
     const fixture = state.fixtures.find(item => item.id === id);
     if (!fixture) return;
     const hex = button.dataset.color || button.closest('.rgb-control').querySelector('.rgb-picker').value;
-    for (const [index, role] of ['red', 'green', 'blue'].entries()) setEditorChannel(channelForRole(fixture, role), parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16));
-    const dimmer = channelForRole(fixture, 'dimmer');
-    if (dimmer !== null) setEditorChannel(dimmer, 255);
-    channelDefinitions(fixture).forEach((def, index) => { if (['white', 'whiteStrobe', 'effect'].includes(def.role)) setEditorChannel(fixture.address + index, 0); });
+    applyRgbSelection(fixture, hex, button);
     button.closest('.control-window').querySelector('.rgb-picker').value = hex;
-    toast('Cor aplicada à cena. Salve a cena para guardar.');
   }
-  if (action === 'preview-scene') {
-    if (!dmx.connected) return toast('Conecte a interface antes de testar a luz.');
-    stopSequence(false);
-    dmx.setChannels(sceneChannelsFromForm($('#sceneForm')));
-    activeSceneId = null;
-    toast('Valores enviados aos aparelhos sem salvar a cena.');
+  if (action === 'delete-group') {
+    const group = state.groups.find(item => item.id === id);
+    if (!group || !confirm(`Excluir o grupo “${group.name}”? Os equipamentos serão mantidos em “Sem grupo”.`)) return;
+    state.groups = state.groups.filter(item => item.id !== id);
+    state.fixtures.forEach(fixture => { if (fixture.groupId === id) fixture.groupId = ''; });
+    save(); closeDialog();
   }
   if (action.startsWith('delete-')) {
+    if (action === 'delete-group') return;
+    if (action === 'delete-scene') { if (deleteScene(id)) closeDialog(); return; }
     if (!confirm('Excluir este item?')) return;
-    if (action === 'delete-scene') { state.scenes = state.scenes.filter(x => x.id !== id); state.sequences.forEach(sequence => sequence.steps = sequence.steps.filter(step => step.sceneId !== id)); }
     if (action === 'delete-sequence') state.sequences = state.sequences.filter(x => x.id !== id);
     if (action === 'delete-fixture') state.fixtures = state.fixtures.filter(x => x.id !== id);
     save(); closeDialog();
   }
 });
 function readEditorChannel(number) { return Number(document.querySelector(`#sceneForm .channel-row[data-channel="${number}"] input[type=number]`)?.value || 0); }
+function applyRgbSelection(fixture, hex, origin) {
+  const context = origin?.closest('.group-controls');
+  const targets = context ? state.fixtures.filter(item => item.groupId === context.dataset.groupId) : [fixture];
+  for (const target of targets) {
+    for (const [index, role] of ['red', 'green', 'blue'].entries()) setEditorChannel(channelForRole(target, role), parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16));
+    const dimmer = channelForRole(target, 'dimmer');
+    if (dimmer !== null) setEditorChannel(dimmer, 255);
+    channelDefinitions(target).forEach((def, index) => { if (['white', 'whiteStrobe', 'effect'].includes(def.role)) setEditorChannel(target.address + index, 0); });
+  }
+}
+function applyEditorChannel(number, value, origin) {
+  const context = origin?.closest('.group-controls');
+  if (!context) return setEditorChannel(number, value);
+  const source = state.fixtures.find(fixture => fixture.id === context.dataset.sourceFixtureId);
+  if (!source) return;
+  state.fixtures.filter(fixture => fixture.groupId === context.dataset.groupId).forEach(fixture => {
+    const channel = matchingGroupChannel(source, fixture, number);
+    if (channel !== null) setEditorChannel(channel, value);
+  });
+}
 function setEditorChannel(number, value) {
   if (number === null || number === undefined) return;
   const safe = Math.max(0, Math.min(255, Number(value) || 0));
@@ -388,6 +483,7 @@ function setEditorChannel(number, value) {
   });
   document.querySelectorAll(`#sceneForm .choice-button[data-channel="${number}"]`).forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.value) === safe)));
   updatePositionDots();
+  scheduleLivePreview();
 }
 function updatePositionDots() {
   document.querySelectorAll('#sceneForm .position-pad').forEach(pad => {
@@ -397,18 +493,31 @@ function updatePositionDots() {
   });
 }
 $('#editorDialog').addEventListener('input', event => {
+  if (event.target.matches('.rgb-picker')) {
+    const control = event.target.closest('.rgb-control');
+    const fixtureId = control.querySelector('[data-action="apply-rgb"][data-id]')?.dataset.id;
+    const fixture = state.fixtures.find(item => item.id === fixtureId);
+    if (fixture) applyRgbSelection(fixture, event.target.value, event.target);
+    return;
+  }
   const row = event.target.closest('.channel-row');
   if (!row) return;
-  setEditorChannel(Number(row.dataset.channel), Number(event.target.value));
+  applyEditorChannel(Number(row.dataset.channel), Number(event.target.value), row);
 });
 $('#editorDialog').addEventListener('change', event => {
   const picker = event.target.closest('.preset-picker');
-  if (picker && picker.value !== '') setEditorChannel(Number(picker.dataset.channel), Number(picker.value));
+  if (picker && picker.value !== '') applyEditorChannel(Number(picker.dataset.channel), Number(picker.value), picker);
 });
+$('#editorDialog').addEventListener('close', endLivePreview);
 $('#editorDialog').addEventListener('submit', event => {
   event.preventDefault();
   const form = event.target;
   const existingId = form.dataset.id;
+  if (form.id === 'groupForm') {
+    const group = { id: existingId || uid(), name: $('#groupName').value.trim() || 'Grupo' };
+    const index = state.groups.findIndex(item => item.id === existingId);
+    if (index >= 0) state.groups[index] = group; else state.groups.push(group);
+  }
   if (form.id === 'fixtureForm') {
     const address = Number($('#fixtureAddress').value), channels = Number($('#fixtureChannels').value);
     if (!Number.isInteger(address) || !Number.isInteger(channels) || address < 1 || channels < 1 || address + channels - 1 > 512) return toast('O equipamento deve ocupar apenas canais de 1 a 512.');
@@ -426,7 +535,7 @@ $('#editorDialog').addEventListener('submit', event => {
         })
       }));
     } catch (error) { return toast(error.message); }
-    const fixture = { id: existingId || uid(), name: $('#fixtureName').value.trim(), type: $('#fixtureType').value.trim() || 'Personalizado', address, channels, channelDefs };
+    const fixture = { id: existingId || uid(), name: $('#fixtureName').value.trim(), type: $('#fixtureType').value.trim() || 'Personalizado', address, channels, groupId: $('#fixtureGroup').value, channelDefs };
     const index = state.fixtures.findIndex(x => x.id === existingId);
     if (index >= 0) state.fixtures[index] = fixture; else state.fixtures.push(fixture);
   }
