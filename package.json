@@ -2,6 +2,7 @@
   "name": "lumen-dmx",
   "version": "0.1.0",
   "description": "Console local de iluminação DMX para igrejas",
+  "author": "CPJCL",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -12,6 +13,7 @@
     "appId": "br.com.cpjcl.lumen",
     "productName": "Lumen DMX",
     "directories": { "output": "release" },
+    "npmRebuild": false,
     "files": ["src/**/*", "package.json", "README.md"],
     "publish": [{ "provider": "github", "owner": "psilaslis-ship-it", "repo": "CPJCL" }],
     "win": { "target": ["portable", "nsis"] }
